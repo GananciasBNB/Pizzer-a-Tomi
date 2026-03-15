@@ -50,14 +50,19 @@ export interface DashboardData {
 // ── Helper interno ────────────────────────────────────────
 
 async function post<T>(action: string, data: unknown): Promise<T> {
-  const res = await fetch(SCRIPT_URL, {
-    method: 'POST',
-    // Apps Script no acepta application/json en preflight — usamos text/plain
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ action, data }),
-  });
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Error en el script');
+  // Apps Script redirige POST→GET perdiendo el body Y los URL params originales.
+  // Usamos GET directamente: doGet ya maneja todas las acciones de escritura.
+  const dataStr = JSON.stringify(data);
+  const url = `${SCRIPT_URL}?action=${encodeURIComponent(action)}&data=${encodeURIComponent(dataStr)}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('Respuesta inválida del servidor');
+  }
+  if (!json.ok) throw new Error((json.error as string) || 'Error en el script');
   return json as T;
 }
 
@@ -101,6 +106,21 @@ export async function getIngredientes(): Promise<{ ok: boolean; data: Record<str
   return get({ action: 'getIngredientes' });
 }
 
+/** Obtiene todos los clientes */
+export async function getClientes(): Promise<{ ok: boolean; data: Record<string, any>[] }> {
+  return get({ action: 'getClientes' });
+}
+
+/** Obtiene todos los productos */
+export async function getProducts(): Promise<{ ok: boolean; data: Record<string, any>[] }> {
+  return get({ action: 'getProducts' });
+}
+
+/** Obtiene todas las categorías */
+export async function getCategories(): Promise<{ ok: boolean; data: Record<string, any>[] }> {
+  return get({ action: 'getCategories' });
+}
+
 /** Sincroniza un producto al Sheet */
 export async function saveProducto(data: {
   id: string;
@@ -111,8 +131,32 @@ export async function saveProducto(data: {
   categoria: string;
   estado: string;
   stock: number;
+  receta?: string; // JSON stringify de RecipeItem[]
+  quitar?: string; // JSON stringify de string[]
+  etiquetaPromo?: string;
 }): Promise<{ ok: boolean }> {
   return post('saveProducto', data);
+}
+
+/** Elimina un producto */
+export async function removeProducto(id: string): Promise<{ ok: boolean }> {
+  return post('removeProducto', { id });
+}
+
+/** Guarda o actualiza una categoría */
+export async function saveCategoria(data: {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  visible: boolean;
+  accent: string;
+}): Promise<{ ok: boolean }> {
+  return post('saveCategoria', data);
+}
+
+/** Elimina una categoría */
+export async function removeCategoria(id: string): Promise<{ ok: boolean }> {
+  return post('removeCategoria', { id });
 }
 
 /** Actualiza el stock de múltiples ingredientes en batch */

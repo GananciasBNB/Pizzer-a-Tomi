@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import CategoryNav from '../components/CategoryNav';
 import ProductCard from '../components/ProductCard';
 import ProductModal from '../components/ProductModal';
@@ -6,6 +6,7 @@ import CartDrawer from '../components/CartDrawer';
 import { useMenuStore } from '../lib/menuStore';
 import { useCartStore } from '../store/cartStore';
 import type { BadgeVariant } from '../components/ui/Badge';
+import { Loader2 } from 'lucide-react';
 
 // Mapear status del menuStore a nuestras variantes de Badge
 const toBadgeVariant = (status: string): BadgeVariant => {
@@ -15,18 +16,24 @@ const toBadgeVariant = (status: string): BadgeVariant => {
 };
 
 export default function Home() {
-  const { categories, products } = useMenuStore();
+  const { categories, products, isLoading } = useMenuStore();
   const openModal = useCartStore(state => state.openModal);
 
   const visibleCategories = categories.filter(c => c.visible);
-  const [activeCategory, setActiveCategory] = useState(visibleCategories[0]?.id ?? '');
+  const [activeCategory, setActiveCategory] = useState('');
+
+  // Cuando las categorías cargan desde el Sheet, seleccionar la primera automáticamente
+  useEffect(() => {
+    if (visibleCategories.length > 0 && !activeCategory) {
+      setActiveCategory(visibleCategories[0].id);
+    }
+  }, [visibleCategories, activeCategory]);
 
   const filteredProducts = products.filter(p => p.categoryId === activeCategory && p.status !== 'sold-out');
 
   const handleOpenProduct = (productId: string) => {
     const menuProduct = products.find(p => p.id === productId);
     if (!menuProduct) return;
-    // Adaptamos el schema del menuStore al formato que espera nuestro cartStore/modal
     openModal({
       id: menuProduct.id,
       categoryId: menuProduct.categoryId,
@@ -81,7 +88,12 @@ export default function Home() {
           {visibleCategories.find(c => c.id === activeCategory)?.name ?? 'Menú'}
         </h2>
 
-        {filteredProducts.length > 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <Loader2 size={32} className="text-nyred animate-spin" />
+            <p className="text-gray-400 text-sm">Cargando el menú...</p>
+          </div>
+        ) : filteredProducts.length > 0 ? (
           <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredProducts.map(product => (
               <ProductCard

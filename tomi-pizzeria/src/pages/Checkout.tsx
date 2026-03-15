@@ -88,30 +88,29 @@ export default function Checkout() {
 
   const buildWhatsAppMessage = () => {
     const paymentLabels: Record<PaymentMethod, string> = {
-      efectivo: '💵 Efectivo',
-      mercadopago: '💳 Mercado Pago',
-      transferencia: '🏦 Transferencia Bancaria',
+      efectivo: 'Efectivo en mano',
+      mercadopago: 'Mercado Pago',
+      transferencia: 'Transferencia Bancaria',
     };
 
     const orderLines = items.map(item => {
-      const size = item.size ? ` (${item.size})` : '';
       const removed = item.removedIngredients.length > 0
-        ? `\n   🚫 Sin: ${item.removedIngredients.join(', ')}`
+        ? `\n* Sin: ${item.removedIngredients.join(', ')}.`
         : '';
-      const qty = item.quantity > 1 ? `x${item.quantity} ` : '';
-      return `▪️ ${qty}${item.name}${size} - $${(item.price * item.quantity).toLocaleString('es-AR')}${removed}`;
+      return `${item.quantity} ${item.name.toUpperCase()} $${(item.price * item.quantity).toLocaleString('es-AR')}${removed}`;
     }).join('\n');
 
+    const nombre = customer.name ? `Hola, soy ${customer.name} y realice el siguiente pedido:` : `Hola, realice el siguiente pedido:`;
+
     return encodeURIComponent(
-      `🍕 *NUEVO PEDIDO - PIZZERÍA TOMI* 🍕\n\n` +
-      `👤 *Cliente:* ${customer.name || 'Anónimo'}\n` +
-      `📱 *Teléfono:* ${customer.phone}\n` +
-      `📍 *Dirección:* ${customer.address}, ${customer.locality}\n` +
-      (customer.notes ? `📝 *Aclaraciones:* ${customer.notes}\n` : '') +
-      `\n*🛒 Tu Pedido:*\n${orderLines}\n\n` +
-      `💰 *TOTAL: $${total.toLocaleString('es-AR')}*\n` +
-      `💳 *Pago:* ${paymentLabels[payment]}\n\n` +
-      `_Enviado desde la app de Tomi's NY Pizza_ 🔥`
+      `PIZZERIA TOMI\n` +
+      `${nombre}\n\n` +
+      `PIZZAS\n` +
+      `${orderLines}\n\n` +
+      `$${total.toLocaleString('es-AR')} TOTAL (Pago ${paymentLabels[payment]})\n\n` +
+      `Direccion:\n` +
+      `${customer.address}. ${customer.locality}.` +
+      (customer.notes ? `\n${customer.notes}.` : '')
     );
   };
 

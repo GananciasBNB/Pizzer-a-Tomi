@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Eye, EyeOff, Edit2, ChevronRight, Package, Tag, Layers, Save, X, FlaskConical, BarChart3, TrendingUp, ShoppingBag, Users, AlertCircle, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Eye, EyeOff, Edit2, ChevronRight, ChevronDown, Package, Tag, Layers, Save, X, FlaskConical, BarChart3, TrendingUp, ShoppingBag, Users, AlertCircle, Loader2, Trash2, ClipboardList } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useMenuStore } from '../lib/menuStore';
 import type { Category, Product, Ingredient, RecipeItem } from '../lib/menuStore';
-import { getDashboard } from '../services/sheetsApi';
+import { getDashboard, getPedidos, getClientes, savePedido } from '../services/sheetsApi';
 import type { DashboardData } from '../services/sheetsApi';
 
 type Tab = 'dashboard' | 'categories' | 'products' | 'ingredients';
@@ -177,15 +177,30 @@ function ProductForm({ product, categories, allIngredients, onSave, onCancel }: 
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 function DashboardTab() {
+  const { ingredients } = useMenuStore();
   const [data, setData] = useState<DashboardData | null>(null);
+  const [pedidos, setPedidos] = useState<Record<string, any>[]>([]);
+  const [clientes, setClientes] = useState<Record<string, any>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
 
   useEffect(() => {
-    getDashboard()
-      .then(res => { setData(res.data); setLoading(false); })
-      .catch(err => { setError('No se pudo conectar con el Sheet. Verificá que el script esté configurado.'); setLoading(false); console.error(err); });
+    Promise.all([getDashboard(), getPedidos(), getClientes()])
+      .then(([dashRes, pedRes, cliRes]) => {
+        setData(dashRes.data);
+        if (pedRes.ok) setPedidos((pedRes.data as Record<string, any>[]).slice(-20).reverse());
+        if (cliRes.ok) setClientes((cliRes.data as Record<string, any>[]).sort((a, b) => (Number(b.NroPedidos) || 0) - (Number(a.NroPedidos) || 0)));
+        setLoading(false);
+      })
+      .catch(err => {
+        setError('No se pudo conectar con el Sheet. Verificá que el script esté configurado.');
+        setLoading(false);
+        console.error(err);
+      });
   }, []);
+
+  const toggleCard = (key: string) => setExpandedCard(prev => prev === key ? null : key);
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-20 gap-3">
@@ -199,7 +214,7 @@ function DashboardTab() {
       <AlertCircle size={32} className="text-nyred" />
       <p className="text-white font-bold">Sin conexión al Sheet</p>
       <p className="text-gray-500 text-sm max-w-sm">{error}</p>
-      <p className="text-gray-600 text-xs">Recordá pegar el código del script en script.google.com y redesplegar.</p>
+      <p className="text-gray-600 text-xs">Recordá pegar el nuevo script en script.google.com y redesplegar como nueva versión.</p>
     </div>
   );
 
@@ -207,88 +222,192 @@ function DashboardTab() {
 
   const fmt = (n: number) => `$${Number(n || 0).toLocaleString('es-AR')}`;
 
+  const stockBajoIngredients = ingredients.filter(i => i.active && i.stock < 5);
+
+  // Tarjetas métricas (ahora son clickeables)
+  const metricCards = [
+    {
+      key: 'hoy',
+      label: 'Ventas hoy',
+      value: fmt(data.ventasHoy),
+      sub: `${data.pedidosHoy} pedido${data.pedidosHoy !== 1 ? 's' : ''} hoy`,
+      icon: TrendingUp,
+      color: 'text-nygreen',
+      borderColor: 'border-nygreen/20',
+      detail: (
+        <div className="flex flex-col gap-1.5 mt-3 pt-3 border-t border-gray-800">
+          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Pedidos de hoy</p>
+          {pedidos.filter(p => {
+            const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/');
+            return String(p.Fecha) === today;
+          }).length === 0
+            ? <p className="text-gray-600 text-xs">Sin pedidos registrados hoy.</p>
+            : pedidos.filter(p => {
+              const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/');
+              return String(p.Fecha) === today;
+            }).map(p => (
+              <div key={String(p.ID)} className="flex justify-between items-center bg-gray-800/60 rounded-lg px-3 py-1.5">
+                <div>
+                  <p className="text-white text-xs font-bold">{String(p.Cliente || 'Anónimo')}</p>
+                  <p className="text-gray-500 text-[10px]">{String(p.Hora)} · {String(p.Pago)}</p>
+                </div>
+                <span className="text-nygreen text-xs font-black">{fmt(Number(p.Total))}</span>
+              </div>
+            ))}
+        </div>
+      ),
+    },
+    {
+      key: 'semana',
+      label: 'Esta semana',
+      value: fmt(data.ventasSemana),
+      sub: 'Últimos 7 días',
+      icon: BarChart3,
+      color: 'text-nyblue',
+      borderColor: 'border-nyblue/20',
+      detail: (
+        <div className="flex flex-col gap-1.5 mt-3 pt-3 border-t border-gray-800">
+          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Top productos semana</p>
+          {data.ranking.slice(0, 5).map((r, i) => (
+            <div key={r.nombre} className="flex items-center gap-2 bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <span className={`text-[10px] font-black w-4 ${ i === 0 ? 'text-nygold' : 'text-gray-500' }`}>{i + 1}</span>
+              <span className="text-white text-xs flex-1 truncate">{r.nombre}</span>
+              <span className="text-gray-400 text-xs">{r.cantidad} u.</span>
+            </div>
+          ))}
+          {data.ranking.length === 0 && <p className="text-gray-600 text-xs">Sin datos de productos todavía.</p>}
+        </div>
+      ),
+    },
+    {
+      key: 'mes',
+      label: 'Este mes',
+      value: fmt(data.ventasMes),
+      sub: `Total: ${data.totalPedidos} pedidos`,
+      icon: ShoppingBag,
+      color: 'text-nygold',
+      borderColor: 'border-nygold/20',
+      detail: (
+        <div className="flex flex-col gap-1.5 mt-3 pt-3 border-t border-gray-800">
+          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Últimos pedidos</p>
+          {pedidos.slice(0, 6).map(p => (
+            <div key={String(p.ID)} className="flex justify-between items-center bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <div>
+                <p className="text-white text-xs font-bold">{String(p.Cliente || 'Anónimo')}</p>
+                <p className="text-gray-500 text-[10px]">{String(p.Fecha)} {String(p.Hora)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-nygold text-xs font-black">{fmt(Number(p.Total))}</p>
+                <p className="text-gray-600 text-[10px]">{String(p.Estado)}</p>
+              </div>
+            </div>
+          ))}
+          {pedidos.length === 0 && <p className="text-gray-600 text-xs">Sin pedidos registrados.</p>}
+        </div>
+      ),
+    },
+    {
+      key: 'clientes',
+      label: 'Clientes',
+      value: String(data.totalClientes),
+      sub: 'Registrados en la base',
+      icon: Users,
+      color: 'text-nyred',
+      borderColor: 'border-nyred/20',
+      detail: (
+        <div className="flex flex-col gap-1.5 mt-3 pt-3 border-t border-gray-800">
+          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Clientes registrados</p>
+          {clientes.length === 0 ? (
+            <p className="text-gray-600 text-xs">Sin clientes registrados todavía.</p>
+          ) : (
+            clientes.slice(0, 8).map((cli, i) => (
+              <div key={i} className="flex items-center justify-between bg-gray-800/60 rounded-lg px-3 py-1.5">
+                <div>
+                  <p className="text-white text-xs font-bold">{String(cli.Nombre || 'Sin nombre')}</p>
+                  <p className="text-gray-500 text-[10px]">{String(cli.Telefono || '-')}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-nyred text-xs font-black">{String(cli.NroPedidos || 0)} pedidos</p>
+                  <p className="text-gray-500 text-[10px]">{String(cli.FechaUltimaCompra || '-')}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-6">
       {/* Alerta stock bajo */}
-      {data.stockBajo.length > 0 && (
+      {stockBajoIngredients.length > 0 && (
         <div className="bg-nyred/10 border border-nyred/30 rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <AlertCircle size={14} className="text-nyred" />
-            <span className="text-nyred font-black text-sm uppercase tracking-wider">Alerta de Stock</span>
+            <span className="text-nyred font-black text-sm uppercase tracking-wider">⚠️ Alerta de Stock Bajo</span>
           </div>
           <div className="flex flex-wrap gap-2">
-            {data.stockBajo.map(i => (
-              <span key={i.nombre} className="bg-nyred/20 text-nyred text-xs font-bold px-2 py-0.5 rounded-full">
-                {i.nombre}: {i.stock} u.
+            {stockBajoIngredients.map(i => (
+              <span key={i.id} className="bg-nyred/20 text-nyred text-xs font-bold px-2 py-0.5 rounded-full">
+                {i.name}: {i.stock} u.
               </span>
             ))}
           </div>
         </div>
       )}
 
-      {/* Métricas principales */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Ventas hoy', value: fmt(data.ventasHoy), icon: TrendingUp, color: 'text-nygreen' },
-          { label: 'Esta semana', value: fmt(data.ventasSemana), icon: BarChart3, color: 'text-nyblue' },
-          { label: 'Este mes', value: fmt(data.ventasMes), icon: ShoppingBag, color: 'text-nygold' },
-          { label: 'Clientes', value: String(data.totalClientes), icon: Users, color: 'text-nyred' },
-        ].map(card => (
-          <div key={card.label} className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-            <card.icon size={18} className={card.color} />
-            <p className="text-white font-black text-xl mt-2">{card.value}</p>
-            <p className="text-gray-500 text-xs">{card.label}</p>
+      {/* Métricas principales — expandibles */}
+      <div className="grid grid-cols-2 gap-3">
+        {metricCards.map(card => (
+          <div
+            key={card.key}
+            className={`bg-gray-900/60 border rounded-2xl p-4 cursor-pointer transition-all hover:bg-gray-900/80 ${
+              expandedCard === card.key ? card.borderColor : 'border-gray-800'
+            }`}
+            onClick={() => toggleCard(card.key)}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <card.icon size={18} className={card.color} />
+                <p className="text-white font-black text-xl mt-2">{card.value}</p>
+                <p className="text-gray-500 text-xs">{card.label}</p>
+                <p className={`text-[10px] mt-0.5 ${card.color} opacity-70`}>{card.sub}</p>
+              </div>
+              <ChevronDown
+                size={14}
+                className={`text-gray-600 mt-1 transition-transform duration-200 ${expandedCard === card.key ? 'rotate-180' : ''}`}
+              />
+            </div>
+            {expandedCard === card.key && card.detail}
           </div>
         ))}
       </div>
 
-      {/* Ranking + Últimos pedidos */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* Ranking de pizzas */}
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-          <h3 className="font-black text-white text-sm uppercase tracking-wider mb-3">🏆 Top Pizzas</h3>
-          {data.ranking.length === 0 ? (
-            <p className="text-gray-600 text-xs">Sin ventas registradas todavía.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {data.ranking.map((r, i) => (
-                <div key={r.nombre} className="flex items-center gap-3">
-                  <span className={`text-xs font-black w-5 text-center ${
-                    i === 0 ? 'text-nygold' : i === 1 ? 'text-gray-300' : i === 2 ? 'text-amber-700' : 'text-gray-600'
-                  }`}>{i + 1}</span>
-                  <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-nyred to-nyblue rounded-full"
-                      style={{ width: `${Math.min(100, (r.cantidad / (data.ranking[0]?.cantidad || 1)) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-white text-xs font-bold w-24 truncate text-right">{r.nombre}</span>
-                  <span className="text-gray-500 text-xs w-6 text-right">{r.cantidad}</span>
+      {/* Ranking de pizzas */}
+      <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+        <h3 className="font-black text-white text-sm uppercase tracking-wider mb-3">🏆 Top Pizzas del período</h3>
+        {data.ranking.length === 0 ? (
+          <p className="text-gray-600 text-xs">Sin ventas registradas todavía.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {data.ranking.map((r, i) => (
+              <div key={r.nombre} className="flex items-center gap-3">
+                <span className={`text-xs font-black w-5 text-center ${
+                  i === 0 ? 'text-nygold' : i === 1 ? 'text-gray-300' : i === 2 ? 'text-amber-700' : 'text-gray-600'
+                }`}>{i + 1}</span>
+                <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-nyred to-nyblue rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, (r.cantidad / (data.ranking[0]?.cantidad || 1)) * 100)}%` }}
+                  />
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Últimos pedidos */}
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-          <h3 className="font-black text-white text-sm uppercase tracking-wider mb-3">📋 Últimos Pedidos</h3>
-          {data.ultimosPedidos.length === 0 ? (
-            <p className="text-gray-600 text-xs">Sin pedidos registrados.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {data.ultimosPedidos.map(p => (
-                <div key={p.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-gray-800 last:border-0">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-xs font-bold truncate">{p.cliente || 'Anónimo'}</p>
-                    <p className="text-gray-600 text-[10px]">{p.fecha} {p.hora}</p>
-                  </div>
-                  <span className="text-nygold text-xs font-black whitespace-nowrap">{fmt(p.total)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <span className="text-white text-xs font-bold w-24 truncate text-right">{r.nombre}</span>
+                <span className="text-gray-500 text-xs w-6 text-right">{r.cantidad}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Totales globales */}
@@ -309,7 +428,7 @@ function DashboardTab() {
 
 export default function AdminPanel() {
   const navigate = useNavigate();
-  const { categories, products, ingredients, addCategory, updateCategory, removeCategory, addProduct, updateProduct, removeProduct, addIngredient, updateIngredient, removeIngredient } = useMenuStore();
+  const { categories, products, ingredients, isLoading, addCategory, updateCategory, removeCategory, addProduct, updateProduct, removeProduct, addIngredient, updateIngredient, removeIngredient } = useMenuStore();
 
   const [tab, setTab] = useState<Tab>('dashboard');
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
@@ -317,12 +436,73 @@ export default function AdminPanel() {
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
 
+  // ── Pedido Admin ──
+  const [showAdminOrder, setShowAdminOrder] = useState(false);
+  const [adminItems, setAdminItems] = useState<{ productId: string; quantity: number }[]>([]);
+  const [adminSelectedProduct, setAdminSelectedProduct] = useState('');
+  const [adminQty, setAdminQty] = useState(1);
+  const [adminCustomer, setAdminCustomer] = useState({ name: '', phone: '', address: '', locality: '' });
+  const [adminPayment, setAdminPayment] = useState('efectivo');
+  const [adminSaving, setAdminSaving] = useState(false);
+
+  const adminTotal = adminItems.reduce((sum, ai) => {
+    const prod = products.find(p => p.id === ai.productId);
+    return sum + (prod?.price || 0) * ai.quantity;
+  }, 0);
+
+  const addAdminItem = () => {
+    if (!adminSelectedProduct) return;
+    setAdminItems(prev => {
+      const existing = prev.find(i => i.productId === adminSelectedProduct);
+      if (existing) return prev.map(i => i.productId === adminSelectedProduct ? { ...i, quantity: i.quantity + adminQty } : i);
+      return [...prev, { productId: adminSelectedProduct, quantity: adminQty }];
+    });
+    setAdminQty(1);
+  };
+
+  const handleSaveAdminOrder = async () => {
+    if (adminItems.length === 0) return;
+    setAdminSaving(true);
+    try {
+      const orderItems = adminItems.map(ai => {
+        const prod = products.find(p => p.id === ai.productId);
+        return { name: prod?.name || '', quantity: ai.quantity, price: prod?.price || 0 };
+      });
+      await savePedido({
+        cliente: adminCustomer.name || 'Admin',
+        telefono: adminCustomer.phone || '-',
+        direccion: [adminCustomer.address, adminCustomer.locality].filter(Boolean).join(', ') || '-',
+        items: orderItems,
+        total: adminTotal,
+        pago: adminPayment,
+        guardarCliente: false,
+      });
+      setAdminItems([]);
+      setAdminCustomer({ name: '', phone: '', address: '', locality: '' });
+      setAdminPayment('efectivo');
+      setShowAdminOrder(false);
+      alert('Pedido guardado en el Sheet.');
+    } catch {
+      alert('Error al guardar el pedido.');
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'categories', label: 'Categorías', icon: Layers },
     { id: 'products', label: 'Productos', icon: Tag },
     { id: 'ingredients', label: 'Ingredientes', icon: Package },
   ];
+
+  if (isLoading) return (
+    <div className="min-h-screen bg-nyblack flex flex-col items-center justify-center gap-4">
+      <Loader2 size={40} className="text-nyblue animate-spin" />
+      <p className="text-white font-bold text-lg">Sincronizando con Google Sheets...</p>
+      <p className="text-gray-500 text-sm">Cargando menú, categorías e ingredientes</p>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-nyblack pb-20">
@@ -357,6 +537,112 @@ export default function AdminPanel() {
               {t.label}
             </button>
           ))}
+        </div>
+
+        {/* ── PEDIDO ADMIN ──────────────────────── */}
+        <div className="mb-4">
+          <button
+            onClick={() => setShowAdminOrder(v => !v)}
+            className="w-full flex items-center justify-between gap-2 bg-nygold/10 border border-nygold/30 text-nygold px-4 py-3 rounded-2xl font-bold text-sm hover:bg-nygold/20 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <ClipboardList size={16} />
+              Pedido Admin
+            </div>
+            <ChevronDown size={16} className={`transition-transform duration-200 ${showAdminOrder ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showAdminOrder && (
+            <div className="mt-2 bg-gray-900 border border-gray-800 rounded-2xl p-4 flex flex-col gap-4">
+
+              {/* Productos */}
+              <div>
+                <p className="text-xs font-bold uppercase text-gray-400 mb-2">Agregar productos</p>
+                <div className="flex gap-2">
+                  <select
+                    value={adminSelectedProduct}
+                    onChange={e => setAdminSelectedProduct(e.target.value)}
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm outline-none"
+                  >
+                    <option value="">Seleccionar producto...</option>
+                    {products.map(p => <option key={p.id} value={p.id}>{p.name} — ${p.price.toLocaleString('es-AR')}</option>)}
+                  </select>
+                  <input
+                    type="number" min={1} value={adminQty}
+                    onChange={e => setAdminQty(Math.max(1, Number(e.target.value)))}
+                    className="w-16 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm text-center outline-none"
+                  />
+                  <button onClick={addAdminItem} className="bg-nygold/20 border border-nygold/40 text-nygold px-3 py-2 rounded-xl font-bold hover:bg-nygold/30">
+                    <Plus size={14} />
+                  </button>
+                </div>
+
+                {adminItems.length > 0 && (
+                  <div className="flex flex-col gap-1.5 mt-2">
+                    {adminItems.map(ai => {
+                      const prod = products.find(p => p.id === ai.productId);
+                      return (
+                        <div key={ai.productId} className="flex items-center justify-between bg-gray-800 rounded-xl px-3 py-2">
+                          <span className="text-white text-sm">{prod?.name} x{ai.quantity}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-nygold text-sm font-bold">${((prod?.price || 0) * ai.quantity).toLocaleString('es-AR')}</span>
+                            <button onClick={() => setAdminItems(prev => prev.filter(i => i.productId !== ai.productId))} className="text-gray-500 hover:text-nyred">
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="text-right text-white font-black text-sm pr-1">Total: ${adminTotal.toLocaleString('es-AR')}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Datos del cliente (todos opcionales) */}
+              <div>
+                <p className="text-xs font-bold uppercase text-gray-400 mb-2">Datos del cliente <span className="normal-case text-gray-600 font-normal">(opcionales)</span></p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['name','phone','address','locality'] as const).map(field => (
+                    <input
+                      key={field}
+                      value={adminCustomer[field]}
+                      onChange={e => setAdminCustomer(prev => ({ ...prev, [field]: e.target.value }))}
+                      placeholder={{ name: 'Nombre', phone: 'Telefono', address: 'Direccion', locality: 'Localidad' }[field]}
+                      className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm outline-none placeholder:text-gray-600"
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Pago */}
+              <div>
+                <p className="text-xs font-bold uppercase text-gray-400 mb-2">Pago</p>
+                <div className="flex gap-2">
+                  {['efectivo','mercadopago','transferencia'].map(m => (
+                    <button key={m} onClick={() => setAdminPayment(m)}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold capitalize transition-colors ${adminPayment === m ? 'bg-nyblue text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Acciones */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveAdminOrder}
+                  disabled={adminSaving || adminItems.length === 0}
+                  className="flex-1 flex items-center justify-center gap-2 bg-nygreen text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50"
+                >
+                  {adminSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Guardar Pedido
+                </button>
+                <button onClick={() => setShowAdminOrder(false)} className="px-4 py-2.5 bg-gray-800 text-gray-400 rounded-xl font-bold text-sm hover:text-white">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── TAB DASHBOARD ─────────────────────────── */}

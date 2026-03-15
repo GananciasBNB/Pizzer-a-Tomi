@@ -1,6 +1,15 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import { updateIngrediente, getIngredientes } from '../services/sheetsApi'
+import {
+  updateIngrediente,
+  getIngredientes,
+  getProducts,
+  getCategories,
+  saveProducto,
+  saveCategoria,
+  removeProducto,
+  removeCategoria,
+} from '../services/sheetsApi'
 
 export type ProductStatus = 'normal' | 'promo' | 'limited' | 'sold-out'
 
@@ -20,10 +29,9 @@ export interface Ingredient {
   notes?: string
 }
 
-// Un ingrediente en la receta de un producto + cuántas unidades usa
 export interface RecipeItem {
   ingredientId: string
-  quantity: number  // Unidades que se descuentan del stock por cada PIZZA pedida
+  quantity: number
 }
 
 export interface Product {
@@ -37,8 +45,8 @@ export interface Product {
   tags: string[]
   extras: string[]
   stock: number
-  removableIngredients?: string[]  // Lo que el cliente puede pedir quitar
-  recipe?: RecipeItem[]           // Ingredientes internos + cantidad (para descontar stock)
+  removableIngredients?: string[]
+  recipe?: RecipeItem[]
   promotionLabel?: string
   timeLabel?: string
 }
@@ -57,6 +65,7 @@ interface MenuStoreValue {
   products: Product[]
   ingredients: Ingredient[]
   heroBanners: HeroBanner[]
+  isLoading: boolean
   addCategory: (category: Omit<Category, 'id'>) => void
   updateCategory: (id: string, data: Partial<Omit<Category, 'id'>>) => void
   addProduct: (product: Omit<Product, 'id'>) => void
@@ -74,206 +83,334 @@ interface MenuStoreValue {
 
 const randomId = () => Math.random().toString(36).slice(2, 9)
 
-const initialCategories: Category[] = [
-  {
-    id: 'cat-pizzas',
-    name: 'Pizzas Clásicas & NY',
-    description: 'Medianas y familiares hechas al horno de leña de Tomi.',
-    visible: true,
-    accent: '#F77F00',
-  },
-  {
-    id: 'cat-especiales',
-    name: 'Especiales y Gourmet',
-    description: 'Combinaciones de autor con ingredientes premium.',
-    visible: true,
-    accent: '#D62828',
-  },
-  {
-    id: 'cat-extras',
-    name: 'Bebidas & Extras Bites',
-    description: 'Agregados crujientes, dips y gaseosas heladas.',
-    visible: true,
-    accent: '#FFB703',
-  },
+// ─── Datos semilla (solo para la primera vez que el Sheet esté vacío) ──────────
+// Estos datos SE SUBEN AL SHEET automáticamente si no hay nada guardado.
+const SEED_CATEGORIES: Omit<Category, 'id'>[] = [
+  { name: 'Pizzas Clásicas & NY', description: 'Medianas y familiares hechas al horno de leña de Tomi.', visible: true, accent: '#F77F00' },
+  { name: 'Especiales y Gourmet', description: 'Combinaciones de autor con ingredientes premium.', visible: true, accent: '#D62828' },
+  { name: 'Bebidas & Extras', description: 'Agregados crujientes, dips y gaseosas heladas.', visible: true, accent: '#FFB703' },
 ]
 
-const initialProducts: Product[] = [
+const SEED_INGREDIENTS: Omit<Ingredient, 'id'>[] = [
+  { name: 'Harina 00', stock: 42, active: true },
+  { name: 'Pepperoni artesanal', stock: 18, active: true },
+  { name: 'Queso muzzarella', stock: 35, active: true },
+]
+
+// Los productos semilla necesitan IDs de categoría, se generan después de seedear categorías
+const buildSeedProducts = (catIds: string[]): Omit<Product, 'id'>[] => [
   {
-    id: 'prod-001',
     name: 'Pepperoni Clásica',
     description: 'Doble capa de pepperoni, queso muzzarella artesanal y toque de oregano.',
     price: 12000,
     image: 'https://images.unsplash.com/photo-1628840042765-356cda07504e?q=80&w=800&auto=format&fit=crop',
-    categoryId: 'cat-pizzas',
+    categoryId: catIds[0] ?? '',
     status: 'promo',
-    tags: ['Con queso extra', 'Popular'],
-    extras: ['Masa fina', 'Masa alta'],
+    tags: [],
+    extras: [],
     stock: 12,
     removableIngredients: ['Salsa de tomate', 'Muzzarella', 'Pepperoni ahumado'],
     promotionLabel: 'Promo 2x1',
+    recipe: [],
   },
   {
-    id: 'prod-002',
     name: 'Cuatro Quesos Tomi',
     description: 'Muzzarella, provolone, parmesano y queso azul con reducción de honey.',
     price: 15000,
     image: 'https://images.unsplash.com/photo-1601924638867-3ec5f0b6cf48?q=80&w=800&auto=format&fit=crop',
-    categoryId: 'cat-pizzas',
+    categoryId: catIds[0] ?? '',
     status: 'limited',
-    tags: ['Tiempo limitado'],
-    extras: ['Aderezo crema a la pimienta'],
+    tags: [],
+    extras: [],
     stock: 5,
     removableIngredients: ['Muzzarella', 'Provolone', 'Parmesano', 'Queso azul'],
-    timeLabel: 'Sólo esta semana',
+    recipe: [],
   },
   {
-    id: 'prod-003',
     name: 'Suprema Tomi Especial',
     description: 'Albahaca fresca, cebolla morada, panceta crocante y tomates confitados.',
     price: 16500,
     image: 'https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?q=80&w=800&auto=format&fit=crop',
-    categoryId: 'cat-especiales',
+    categoryId: catIds[1] ?? '',
     status: 'normal',
-    tags: ['Chef Suggestion'],
-    extras: ['Borde relleno de queso'],
+    tags: [],
+    extras: [],
     stock: 8,
     removableIngredients: ['Albahaca', 'Cebolla morada', 'Panceta', 'Tomates confitados'],
+    recipe: [],
   },
   {
-    id: 'prod-004',
-    name: 'Tomi’s Cajun Wings (6u)',
+    name: 'Cajun Wings (6u)',
     description: 'Alitas caramelizadas con glaseado casero, acompañadas de tu dip favorito.',
     price: 7500,
     image: 'https://images.unsplash.com/photo-1606755962772-0f7d0d6d7f57?q=80&w=1200&auto=format&fit=crop',
-    categoryId: 'cat-extras',
+    categoryId: catIds[2] ?? '',
     status: 'normal',
-    tags: ['Crocante'],
-    extras: ['Dip ranch', 'Dip spicy'],
+    tags: [],
+    extras: [],
     stock: 20,
+    recipe: [],
   },
-]
-
-const initialIngredients: Ingredient[] = [
-  { id: 'ing-01', name: 'Harina 00', stock: 42, active: true },
-  { id: 'ing-02', name: 'Pepperoni artesanal', stock: 18, active: true },
-  { id: 'ing-03', name: 'Queso muzzarella local', stock: 35, active: true },
 ]
 
 const initialHero: HeroBanner[] = [
-  {
-    id: 'hero-01',
-    title: 'Tomi’s Oven Stories',
-    tagline: 'Pizza NY artesanal, hecha 100% a mano con ingredientes locales.',
-    cta: 'Ver Carta',
-    accentColor: '#D62828',
-    status: 'live',
-  },
+  { id: 'hero-01', title: 'Tomi\'s Oven Stories', tagline: 'Pizza NY artesanal, hecha 100% a mano.', cta: 'Ver Carta', accentColor: '#D62828', status: 'live' },
 ]
 
 const MenuContext = createContext<MenuStoreValue | undefined>(undefined)
 
 export function MenuProvider({ children }: { children: ReactNode }) {
-  const [categories, setCategories] = useState(initialCategories)
-  const [products, setProducts] = useState(initialProducts)
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]) // Comienza vacío, se carga desde Sheets
+  const [categories, setCategories] = useState<Category[]>([])
+  const [products, setProducts] = useState<Product[]>([])
+  const [ingredients, setIngredients] = useState<Ingredient[]>([])
   const [heroBanners, setHeroBanners] = useState(initialHero)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Cargar ingredientes reales desde Google Sheets
-    getIngredientes()
-      .then(res => {
-        if (res.ok && res.data) {
-          const loaded: Ingredient[] = res.data.map(row => ({
+    async function loadData() {
+      console.log('🍕 Iniciando carga de datos desde Sheets...')
+      setIsLoading(true)
+      try {
+        // ── 1. Ingredientes ──────────────────────────────────────
+        const ingRes = await getIngredientes()
+        let loadedIngredients: Ingredient[] = []
+        if (ingRes.ok && ingRes.data && ingRes.data.length > 0) {
+          loadedIngredients = ingRes.data.map(row => ({
             id: String(row.ID),
             name: String(row.Nombre),
             stock: Number(row.Stock) || 0,
-            active: row.Activo === true || row.Activo === 'true' || row.Activo === 'TRUE',
+            active: row.Activo === true || String(row.Activo).toLowerCase() === 'true',
           }))
-          // Si el sheet estaba completamente vacío, usamos init, sino los del sheet
-          if (loaded.length === 0) setIngredients(initialIngredients)
-          else setIngredients(loaded)
+          console.log(`✅ ${loadedIngredients.length} ingredientes cargados desde Sheet`)
+        } else {
+          // Sheet vacío → sembrar ingredientes
+          console.log('⬆️ Sheet de Ingredientes vacío. Sembrando datos iniciales...')
+          const seedIds: string[] = []
+          for (const ing of SEED_INGREDIENTS) {
+            const newId = randomId()
+            seedIds.push(newId)
+            await updateIngrediente({ id: newId, nombre: ing.name, stock: ing.stock, activo: ing.active })
+            loadedIngredients.push({ ...ing, id: newId })
+          }
+          console.log('✅ Ingredientes sembrados en Sheet')
         }
-      })
-      .catch(console.error)
+        setIngredients(loadedIngredients)
+
+        // ── 2. Categorías ────────────────────────────────────────
+        const catRes = await getCategories()
+        let loadedCategories: Category[] = []
+        if (catRes.ok && catRes.data && catRes.data.length > 0) {
+          loadedCategories = catRes.data.map(row => ({
+            id: String(row.ID),
+            name: String(row.Nombre),
+            description: String(row.Descripcion || ''),
+            visible: row.Visible === true || String(row.Visible).toLowerCase() === 'true',
+            accent: String(row.Acento || '#D22630'),
+          }))
+          console.log(`✅ ${loadedCategories.length} categorías cargadas desde Sheet`)
+        } else {
+          // Sheet vacío → sembrar categorías
+          console.log('⬆️ Sheet de Categorías vacío. Sembrando datos iniciales...')
+          for (const cat of SEED_CATEGORIES) {
+            const newId = randomId()
+            await saveCategoria({ id: newId, nombre: cat.name, descripcion: cat.description, visible: cat.visible, accent: cat.accent })
+            loadedCategories.push({ ...cat, id: newId })
+          }
+          console.log('✅ Categorías sembradas en Sheet')
+        }
+        setCategories(loadedCategories)
+
+        // ── 3. Productos ─────────────────────────────────────────
+        const prodRes = await getProducts()
+        let loadedProducts: Product[] = []
+        if (prodRes.ok && prodRes.data && prodRes.data.length > 0) {
+          loadedProducts = prodRes.data.map(row => {
+            let removable: string[] = []
+            let recipe: RecipeItem[] = []
+            try { removable = row.Quitar ? JSON.parse(String(row.Quitar)) : [] } catch { removable = [] }
+            try { recipe = row.Receta ? JSON.parse(String(row.Receta)) : [] } catch { recipe = [] }
+            return {
+              id: String(row.ID),
+              name: String(row.Nombre),
+              description: String(row.Descripcion || ''),
+              price: Number(row.Precio) || 0,
+              image: String(row.Imagen || ''),
+              categoryId: String(row.CategoriaID || ''),
+              status: (String(row.Estado || 'normal')) as ProductStatus,
+              stock: Number(row.Stock) || 0,
+              tags: [],
+              extras: [],
+              promotionLabel: String(row.EtiquetaPromo || ''),
+              timeLabel: '',
+              removableIngredients: removable,
+              recipe,
+            }
+          })
+          console.log(`✅ ${loadedProducts.length} productos cargados desde Sheet`)
+        } else {
+          // Sheet vacío → sembrar productos con las categorías ya creadas
+          console.log('⬆️ Sheet de Productos vacío. Sembrando datos iniciales...')
+          const catIds = loadedCategories.map(c => c.id)
+          const seedProducts = buildSeedProducts(catIds)
+          for (const prod of seedProducts) {
+            const newId = randomId()
+            await saveProducto({
+              id: newId,
+              nombre: prod.name,
+              descripcion: prod.description,
+              precio: prod.price,
+              imagen: prod.image,
+              categoria: prod.categoryId,
+              estado: prod.status,
+              stock: prod.stock,
+              receta: JSON.stringify(prod.recipe || []),
+              quitar: JSON.stringify(prod.removableIngredients || []),
+              etiquetaPromo: prod.promotionLabel,
+            })
+            loadedProducts.push({ ...prod, id: newId })
+          }
+          console.log('✅ Productos sembrados en Sheet')
+        }
+        setProducts(loadedProducts)
+        console.log('🎉 Carga de datos completada')
+      } catch (err) {
+        console.error('❌ Error cargando datos del Sheet:', err)
+        // En caso de error de red, el store queda vacío — no se usan datos locales falsos
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
   }, [])
 
-  const addCategory = (category: Omit<Category, 'id'>) => {
-    setCategories((prev) => [...prev, { ...category, id: randomId() }])
+  // ── Categorías ────────────────────────────────────────────────────────────────
+  const addCategory = (categoryData: Omit<Category, 'id'>) => {
+    const freshId = randomId()
+    const newCat = { ...categoryData, id: freshId }
+    setCategories(prev => [...prev, newCat])
+    saveCategoria({ id: freshId, nombre: newCat.name, descripcion: newCat.description, visible: newCat.visible, accent: newCat.accent })
+      .then(res => console.log('saveCategoria:', res))
+      .catch(console.error)
   }
 
   const updateCategory = (id: string, data: Partial<Omit<Category, 'id'>>) => {
-    setCategories((prev) => prev.map((category) => (category.id === id ? { ...category, ...data } : category)))
+    setCategories(prev => prev.map(cat => {
+      if (cat.id !== id) return cat
+      const merged = { ...cat, ...data }
+      saveCategoria({ id, nombre: merged.name, descripcion: merged.description, visible: merged.visible, accent: merged.accent })
+        .catch(console.error)
+      return merged
+    }))
   }
 
-  const addProduct = (product: Omit<Product, 'id'>) => {
-    setProducts((prev) => [...prev, { ...product, id: randomId() }])
+  const removeCategory = (id: string) => {
+    setCategories(prev => prev.filter(c => c.id !== id))
+    removeCategoria(id).catch(console.error)
+  }
+
+  // ── Productos ─────────────────────────────────────────────────────────────────
+  const addProduct = (productData: Omit<Product, 'id'>) => {
+    const freshId = randomId()
+    const newProd = { ...productData, id: freshId }
+    setProducts(prev => [...prev, newProd])
+    saveProducto({
+      id: freshId,
+      nombre: newProd.name,
+      descripcion: newProd.description,
+      precio: newProd.price,
+      imagen: newProd.image,
+      categoria: newProd.categoryId,
+      estado: newProd.status,
+      stock: newProd.stock,
+      receta: JSON.stringify(newProd.recipe || []),
+      quitar: JSON.stringify(newProd.removableIngredients || []),
+      etiquetaPromo: newProd.promotionLabel,
+    }).then(res => console.log('saveProducto:', res))
+      .catch(console.error)
   }
 
   const updateProduct = (id: string, data: Partial<Omit<Product, 'id'>>) => {
-    setProducts((prev) => prev.map((product) => (product.id === id ? { ...product, ...data } : product)))
+    setProducts(prev => prev.map(prod => {
+      if (prod.id !== id) return prod
+      const merged = { ...prod, ...data }
+      saveProducto({
+        id,
+        nombre: merged.name,
+        descripcion: merged.description,
+        precio: merged.price,
+        imagen: merged.image,
+        categoria: merged.categoryId,
+        estado: merged.status,
+        stock: merged.stock,
+        receta: JSON.stringify(merged.recipe || []),
+        quitar: JSON.stringify(merged.removableIngredients || []),
+        etiquetaPromo: merged.promotionLabel,
+      }).catch(console.error)
+      return merged
+    }))
+  }
+
+  const removeProduct = (id: string) => {
+    setProducts(prev => prev.filter(p => p.id !== id))
+    removeProducto(id).catch(console.error)
   }
 
   const adjustProductStock = (id: string, amount: number) => {
     if (!id) return
-    setProducts((prev) =>
-      prev.map((product) =>
-        product.id === id ? { ...product, stock: Math.max(0, product.stock + amount) } : product,
-      ),
-    )
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: Math.max(0, p.stock + amount) } : p))
   }
 
+  // ── Ingredientes ──────────────────────────────────────────────────────────────
   const addIngredient = (ingredient: Omit<Ingredient, 'id'>) => {
-    setIngredients((prev) => {
-      // Evitar duplicados por nombre
+    setIngredients(prev => {
       const exists = prev.some(ing => ing.name.toLowerCase() === ingredient.name.toLowerCase())
       if (exists) {
         alert(`Ya existe un ingrediente llamado "${ingredient.name}".`)
         return prev
       }
-      
       const newId = randomId()
-      const newIngredients = [...prev, { ...ingredient, id: newId }]
       updateIngrediente({ id: newId, nombre: ingredient.name, stock: ingredient.stock, activo: ingredient.active }).catch(console.error)
-      return newIngredients
+      return [...prev, { ...ingredient, id: newId }]
     })
   }
 
   const updateIngredient = (id: string, data: Partial<Omit<Ingredient, 'id'>>) => {
-    setIngredients((prev) => prev.map((ingredient) => {
-      if (ingredient.id === id) {
-        const merged = { ...ingredient, ...data }
-        updateIngrediente({ id, nombre: merged.name, stock: merged.stock, activo: merged.active }).catch(console.error)
-        return merged
-      }
-      return ingredient
+    setIngredients(prev => prev.map(ing => {
+      if (ing.id !== id) return ing
+      const merged = { ...ing, ...data }
+      updateIngrediente({ id, nombre: merged.name, stock: merged.stock, activo: merged.active }).catch(console.error)
+      return merged
     }))
   }
 
+  const removeIngredient = (id: string) => {
+    setIngredients(prev => prev.filter(i => i.id !== id))
+    import('../services/sheetsApi').then(({ removeIngrediente }) => {
+      removeIngrediente(id).catch(console.error)
+    })
+  }
+
+  // ── Hero Banners ──────────────────────────────────────────────────────────────
   const addHeroBanner = (hero: Omit<HeroBanner, 'id'>) => {
-    setHeroBanners((prev) => [...prev, { ...hero, id: randomId() }])
+    setHeroBanners(prev => [...prev, { ...hero, id: randomId() }])
   }
 
   const updateHeroBanner = (id: string, data: Partial<Omit<HeroBanner, 'id'>>) => {
-    setHeroBanners((prev) => prev.map((hero) => (hero.id === id ? { ...hero, ...data } : hero)))
+    setHeroBanners(prev => prev.map(hero => hero.id === id ? { ...hero, ...data } : hero))
   }
 
-  // Al confirmar un pedido: descuenta ingredientes según la receta de cada pizza
   const deductIngredientsForOrder = (orderedItems: { productId: string; quantity: number }[]) => {
-    setIngredients((prevIngredients) => {
-      // Calculamos cuánto descontar de cada ingrediente
+    setIngredients(prevIngredients => {
       const deductions: Record<string, number> = {}
-
       orderedItems.forEach(({ productId, quantity }) => {
-        const product = products.find((p) => p.id === productId)
+        const product = products.find(p => p.id === productId)
         if (!product?.recipe) return
-
         product.recipe.forEach(({ ingredientId, quantity: qtyPerPizza }) => {
           deductions[ingredientId] = (deductions[ingredientId] ?? 0) + qtyPerPizza * quantity
         })
       })
-
-      return prevIngredients.map((ing) =>
+      return prevIngredients.map(ing =>
         deductions[ing.id] !== undefined
           ? { ...ing, stock: Math.max(0, ing.stock - deductions[ing.id]) }
           : ing
@@ -281,40 +418,12 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     })
   }
 
-  const removeCategory = (id: string) => {
-    setCategories((prev) => prev.filter((c) => c.id !== id))
-    setProducts((prev) => prev.filter((p) => p.categoryId !== id))
-  }
-
-  const removeProduct = (id: string) => {
-    setProducts((prev) => prev.filter((p) => p.id !== id))
-  }
-
-  const removeIngredient = (id: string) => {
-    setIngredients((prev) => prev.filter((i) => i.id !== id))
-    import('../services/sheetsApi').then(({ removeIngrediente }) => {
-      removeIngrediente(id).catch(console.error)
-    })
-  }
-
   const value: MenuStoreValue = {
-    categories,
-    products,
-    ingredients,
-    heroBanners,
-    addCategory,
-    updateCategory,
-    removeCategory,
-    addProduct,
-    updateProduct,
-    removeProduct,
-    adjustProductStock,
-    addIngredient,
-    updateIngredient,
-    removeIngredient,
-    addHeroBanner,
-    updateHeroBanner,
-    deductIngredientsForOrder,
+    categories, products, ingredients, heroBanners, isLoading,
+    addCategory, updateCategory, removeCategory,
+    addProduct, updateProduct, removeProduct,
+    adjustProductStock, addIngredient, updateIngredient, removeIngredient,
+    addHeroBanner, updateHeroBanner, deductIngredientsForOrder,
   }
 
   return <MenuContext.Provider value={value}>{children}</MenuContext.Provider>
@@ -322,8 +431,6 @@ export function MenuProvider({ children }: { children: ReactNode }) {
 
 export function useMenuStore() {
   const context = useContext(MenuContext)
-  if (!context) {
-    throw new Error('useMenuStore must be used within a MenuProvider')
-  }
+  if (!context) throw new Error('useMenuStore must be used within a MenuProvider')
   return context
 }
