@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-nyred: #D22630;    /* Rojo clásico de ambas banderas */
+  --color-nyblack: #080B12;  /* Fondo hiper oscuro con tinte azulado profundo */
+  --color-nyblue: #0A3161;   /* Azul Marino USA */
+  --color-nygreen: #008C45;  /* Verde Bandera Italia */
+  --color-nygold: #F4A261;   /* Dorado corteza de pizza */
+  --font-sans: "Inter", sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-nyblack);
+    color: white;
+    -webkit-font-smoothing: antialiased;
+  }
+  
+  ::selection {
+    background-color: var(--color-nyred);
+    color: white;
+  }
+}
+
+@utility text-glow {
+  text-shadow: 0 0 10px rgba(10, 49, 97, 0.7), 0 0 20px rgba(210, 38, 48, 0.5); /* Brillo USA/Rojo */
+}
