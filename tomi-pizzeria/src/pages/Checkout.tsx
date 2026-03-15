@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, Phone, MapPin, MessageCircle, Loader2, BookmarkCheck } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, MessageCircle, Loader2, BookmarkCheck, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useCartStore } from '../store/cartStore';
 import { useMenuStore } from '../lib/menuStore';
 import { savePedido } from '../services/sheetsApi';
@@ -11,6 +11,7 @@ interface CustomerData {
   name: string;
   phone: string;
   address: string;
+  locality: string;
   notes: string;
 }
 
@@ -25,12 +26,16 @@ export default function Checkout() {
     name: '',
     phone: '',
     address: '',
+    locality: '',
     notes: '',
   });
   const [payment, setPayment] = useState<PaymentMethod>('efectivo');
-  const [errors, setErrors] = useState<Partial<CustomerData>>({});
+  const [errors, setErrors] = useState<Partial<CustomerData & { locality: string }>>({});
   const [loading, setLoading] = useState(false);
-  const [saveData, setSaveData] = useState(false); // checkbox "Recordar mis datos"
+  const [saveData, setSaveData] = useState(false);
+  // Validación de dirección
+  const [addrStatus, setAddrStatus] = useState<'idle' | 'checking' | 'ok' | 'notfound' | 'error'>('idle');
+  const addrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cargar datos guardados del cliente desde localStorage
   useEffect(() => {
@@ -57,8 +62,28 @@ export default function Checkout() {
     // nombre es OPCIONAL (modo anónimo)
     if (!customer.phone.trim()) newErrors.phone = 'El teléfono es obligatorio para la entrega';
     if (!customer.address.trim()) newErrors.address = 'La dirección es obligatoria';
+    if (!customer.locality.trim()) newErrors.locality = 'La localidad es obligatoria';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  // Validación de dirección via Nominatim (OpenStreetMap)
+  const checkAddress = (address: string, locality: string) => {
+    if (!address.trim() || !locality.trim()) { setAddrStatus('idle'); return; }
+    setAddrStatus('checking');
+    if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current);
+    addrDebounceRef.current = setTimeout(async () => {
+      try {
+        const q = encodeURIComponent(`${address}, ${locality}, Argentina`);
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=3`, {
+          headers: { 'Accept-Language': 'es' }
+        });
+        const data = await res.json();
+        setAddrStatus(data.length > 0 ? 'ok' : 'notfound');
+      } catch {
+        setAddrStatus('error');
+      }
+    }, 1000);
   };
 
   const buildWhatsAppMessage = () => {
@@ -79,9 +104,9 @@ export default function Checkout() {
 
     return encodeURIComponent(
       `🍕 *NUEVO PEDIDO - PIZZERÍA TOMI* 🍕\n\n` +
-      `👤 *Cliente:* ${customer.name}\n` +
+      `👤 *Cliente:* ${customer.name || 'Anónimo'}\n` +
       `📱 *Teléfono:* ${customer.phone}\n` +
-      `📍 *Dirección:* ${customer.address}\n` +
+      `📍 *Dirección:* ${customer.address}, ${customer.locality}\n` +
       (customer.notes ? `📝 *Aclaraciones:* ${customer.notes}\n` : '') +
       `\n*🛒 Tu Pedido:*\n${orderLines}\n\n` +
       `💰 *TOTAL: $${total.toLocaleString('es-AR')}*\n` +
@@ -189,19 +214,19 @@ export default function Checkout() {
           </h2>
 
           <div className="flex flex-col gap-4">
-            {/* Nombre */}
+            {/* Nombre — OPCIONAL */}
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                Nombre completo *
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 flex items-center gap-2">
+                Nombre completo
+                <span className="text-gray-600 text-[10px] font-normal normal-case tracking-normal">(opcional — podés pedir anónimo)</span>
               </label>
               <input
                 type="text"
                 value={customer.name}
                 onChange={(e) => handleChange('name', e.target.value)}
                 placeholder="Ej: Juan García"
-                className={`w-full bg-gray-800 border ${errors.name ? 'border-nyred' : 'border-gray-700'} rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-nyblue transition-colors`}
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-nyblue transition-colors"
               />
-              {errors.name && <p className="text-nyred text-xs mt-1 font-bold">{errors.name}</p>}
             </div>
 
             {/* Teléfono */}
@@ -219,19 +244,59 @@ export default function Checkout() {
               {errors.phone && <p className="text-nyred text-xs mt-1 font-bold">{errors.phone}</p>}
             </div>
 
-            {/* Dirección */}
+            {/* Localidad */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 flex items-center gap-1">
-                <MapPin size={11} /> Dirección de entrega *
+                <MapPin size={11} /> Localidad *
               </label>
               <input
                 type="text"
-                value={customer.address}
-                onChange={(e) => handleChange('address', e.target.value)}
-                placeholder="Calle, número, piso/depto"
-                className={`w-full bg-gray-800 border ${errors.address ? 'border-nyred' : 'border-gray-700'} rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-nyblue transition-colors`}
+                value={customer.locality}
+                onChange={(e) => {
+                  handleChange('locality', e.target.value);
+                  checkAddress(customer.address, e.target.value);
+                }}
+                placeholder="Ej: Palermo, Villa Urquiza, San Isidro..."
+                className={`w-full bg-gray-800 border ${errors.locality ? 'border-nyred' : 'border-gray-700'} rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-nyblue transition-colors`}
               />
+              {errors.locality && <p className="text-nyred text-xs mt-1 font-bold">{errors.locality}</p>}
+            </div>
+
+            {/* Dirección con validación */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 flex items-center gap-1">
+                Calle y número *
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={customer.address}
+                  onChange={(e) => {
+                    handleChange('address', e.target.value);
+                    checkAddress(e.target.value, customer.locality);
+                  }}
+                  placeholder="Ej: Av. Corrientes 1234, piso 2"
+                  className={`w-full bg-gray-800 border ${
+                    errors.address ? 'border-nyred'
+                    : addrStatus === 'ok' ? 'border-nygreen'
+                    : addrStatus === 'notfound' ? 'border-nygold'
+                    : 'border-gray-700'
+                  } rounded-xl px-4 py-3 pr-10 text-white placeholder-gray-500 focus:outline-none transition-colors`}
+                />
+                {/* Indicador de status */}
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  {addrStatus === 'checking' && <Loader2 size={14} className="text-gray-500 animate-spin" />}
+                  {addrStatus === 'ok' && <CheckCircle2 size={14} className="text-nygreen" />}
+                  {addrStatus === 'notfound' && <AlertTriangle size={14} className="text-nygold" />}
+                </div>
+              </div>
               {errors.address && <p className="text-nyred text-xs mt-1 font-bold">{errors.address}</p>}
+              {addrStatus === 'ok' && (
+                <p className="text-nygreen text-xs mt-1">✓ Dirección verificada en el mapa</p>
+              )}
+              {addrStatus === 'notfound' && (
+                <p className="text-nygold text-xs mt-1">⚠ No encontramos esa calle en {customer.locality || 'esa zona'}. Verificá que est\u00e9 bien escrita.</p>
+              )}
             </div>
 
             {/* Notas opcionales */}
@@ -247,6 +312,27 @@ export default function Checkout() {
                 className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-nyblue transition-colors resize-none"
               />
             </div>
+
+            {/* Checkbox: Guardar datos para próxima vez */}
+            <button
+              type="button"
+              onClick={() => setSaveData(prev => !prev)}
+              className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all w-full ${
+                saveData
+                  ? 'border-nygreen bg-nygreen/5 text-nygreen'
+                  : 'border-gray-700 text-gray-500 hover:border-gray-600'
+              }`}
+            >
+              <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                saveData ? 'border-nygreen bg-nygreen' : 'border-gray-600'
+              }`}>
+                {saveData && <BookmarkCheck size={12} className="text-white" />}
+              </div>
+              <div>
+                <p className="text-xs font-bold">Recordar mis datos para mi próximo pedido</p>
+                <p className="text-[10px] text-gray-500">Tu nombre, teléfono y dirección se guardan de forma segura.</p>
+              </div>
+            </button>
           </div>
         </section>
 

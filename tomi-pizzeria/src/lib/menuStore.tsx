@@ -66,6 +66,8 @@ interface MenuStoreValue {
   addHeroBanner: (hero: Omit<HeroBanner, 'id'>) => void
   updateHeroBanner: (id: string, data: Partial<Omit<HeroBanner, 'id'>>) => void
   deductIngredientsForOrder: (orderedItems: { productId: string; quantity: number }[]) => void
+  removeCategory: (id: string) => void
+  removeProduct: (id: string) => void
 }
 
 const randomId = () => Math.random().toString(36).slice(2, 9)
@@ -239,6 +241,15 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     })
   }
 
+  const removeCategory = (id: string) => {
+    setCategories((prev) => prev.filter((c) => c.id !== id))
+    setProducts((prev) => prev.filter((p) => p.categoryId !== id))
+  }
+
+  const removeProduct = (id: string) => {
+    setProducts((prev) => prev.filter((p) => p.id !== id))
+  }
+
   const value: MenuStoreValue = {
     categories,
     products,
@@ -246,8 +257,10 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     heroBanners,
     addCategory,
     updateCategory,
+    removeCategory,
     addProduct,
     updateProduct,
+    removeProduct,
     adjustProductStock,
     addIngredient,
     updateIngredient,

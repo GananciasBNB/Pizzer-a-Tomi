@@ -1,10 +1,12 @@
-import { useState } from 'react';
-import { ArrowLeft, Plus, Eye, EyeOff, Edit2, ChevronRight, Package, Tag, Layers, Save, X, FlaskConical } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Plus, Eye, EyeOff, Edit2, ChevronRight, Package, Tag, Layers, Save, X, FlaskConical, BarChart3, TrendingUp, ShoppingBag, Users, AlertCircle, Loader2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useMenuStore } from '../lib/menuStore';
 import type { Category, Product, Ingredient, RecipeItem } from '../lib/menuStore';
+import { getDashboard } from '../services/sheetsApi';
+import type { DashboardData } from '../services/sheetsApi';
 
-type Tab = 'categories' | 'products' | 'ingredients';
+type Tab = 'dashboard' | 'categories' | 'products' | 'ingredients';
 
 // ─── Formulario de Producto ────────────────────────────────────────────────
 function ProductForm({ product, categories, allIngredients, onSave, onCancel }: {
@@ -173,18 +175,150 @@ function ProductForm({ product, categories, allIngredients, onSave, onCancel }: 
   );
 }
 
-// ─── Admin Panel Principal ────────────────────────────────────────────────────
+// ─── Dashboard Tab ────────────────────────────────────────────────────────────
+function DashboardTab() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDashboard()
+      .then(res => { setData(res.data); setLoading(false); })
+      .catch(err => { setError('No se pudo conectar con el Sheet. Verificá que el script esté configurado.'); setLoading(false); console.error(err); });
+  }, []);
+
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <Loader2 size={32} className="text-nyblue animate-spin" />
+      <p className="text-gray-400 text-sm">Cargando datos del Sheet...</p>
+    </div>
+  );
+
+  if (error) return (
+    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+      <AlertCircle size={32} className="text-nyred" />
+      <p className="text-white font-bold">Sin conexión al Sheet</p>
+      <p className="text-gray-500 text-sm max-w-sm">{error}</p>
+      <p className="text-gray-600 text-xs">Recordá pegar el código del script en script.google.com y redesplegar.</p>
+    </div>
+  );
+
+  if (!data) return null;
+
+  const fmt = (n: number) => `$${Number(n || 0).toLocaleString('es-AR')}`;
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Alerta stock bajo */}
+      {data.stockBajo.length > 0 && (
+        <div className="bg-nyred/10 border border-nyred/30 rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertCircle size={14} className="text-nyred" />
+            <span className="text-nyred font-black text-sm uppercase tracking-wider">Alerta de Stock</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {data.stockBajo.map(i => (
+              <span key={i.nombre} className="bg-nyred/20 text-nyred text-xs font-bold px-2 py-0.5 rounded-full">
+                {i.nombre}: {i.stock} u.
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Métricas principales */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Ventas hoy', value: fmt(data.ventasHoy), icon: TrendingUp, color: 'text-nygreen' },
+          { label: 'Esta semana', value: fmt(data.ventasSemana), icon: BarChart3, color: 'text-nyblue' },
+          { label: 'Este mes', value: fmt(data.ventasMes), icon: ShoppingBag, color: 'text-nygold' },
+          { label: 'Clientes', value: String(data.totalClientes), icon: Users, color: 'text-nyred' },
+        ].map(card => (
+          <div key={card.label} className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+            <card.icon size={18} className={card.color} />
+            <p className="text-white font-black text-xl mt-2">{card.value}</p>
+            <p className="text-gray-500 text-xs">{card.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Ranking + Últimos pedidos */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Ranking de pizzas */}
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+          <h3 className="font-black text-white text-sm uppercase tracking-wider mb-3">🏆 Top Pizzas</h3>
+          {data.ranking.length === 0 ? (
+            <p className="text-gray-600 text-xs">Sin ventas registradas todavía.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {data.ranking.map((r, i) => (
+                <div key={r.nombre} className="flex items-center gap-3">
+                  <span className={`text-xs font-black w-5 text-center ${
+                    i === 0 ? 'text-nygold' : i === 1 ? 'text-gray-300' : i === 2 ? 'text-amber-700' : 'text-gray-600'
+                  }`}>{i + 1}</span>
+                  <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-nyred to-nyblue rounded-full"
+                      style={{ width: `${Math.min(100, (r.cantidad / (data.ranking[0]?.cantidad || 1)) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-white text-xs font-bold w-24 truncate text-right">{r.nombre}</span>
+                  <span className="text-gray-500 text-xs w-6 text-right">{r.cantidad}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Últimos pedidos */}
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+          <h3 className="font-black text-white text-sm uppercase tracking-wider mb-3">📋 Últimos Pedidos</h3>
+          {data.ultimosPedidos.length === 0 ? (
+            <p className="text-gray-600 text-xs">Sin pedidos registrados.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {data.ultimosPedidos.map(p => (
+                <div key={p.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-gray-800 last:border-0">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-xs font-bold truncate">{p.cliente || 'Anónimo'}</p>
+                    <p className="text-gray-600 text-[10px]">{p.fecha} {p.hora}</p>
+                  </div>
+                  <span className="text-nygold text-xs font-black whitespace-nowrap">{fmt(p.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Totales globales */}
+      <div className="flex gap-3 text-center">
+        <div className="flex-1 bg-gray-900/40 border border-gray-800 rounded-2xl p-3">
+          <p className="text-2xl font-black text-white">{data.totalPedidos}</p>
+          <p className="text-gray-500 text-xs">Pedidos totales</p>
+        </div>
+        <div className="flex-1 bg-gray-900/40 border border-gray-800 rounded-2xl p-3">
+          <p className="text-2xl font-black text-nygreen">{fmt(data.ventasMes)}</p>
+          <p className="text-gray-500 text-xs">Facturado este mes</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function AdminPanel() {
   const navigate = useNavigate();
-  const { categories, products, ingredients, addCategory, updateCategory, addProduct, updateProduct, addIngredient, updateIngredient } = useMenuStore();
+  const { categories, products, ingredients, addCategory, updateCategory, removeCategory, addProduct, updateProduct, removeProduct, addIngredient, updateIngredient } = useMenuStore();
 
-  const [tab, setTab] = useState<Tab>('categories');
+  const [tab, setTab] = useState<Tab>('dashboard');
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'categories', label: 'Categorías', icon: Layers },
     { id: 'products', label: 'Productos', icon: Tag },
     { id: 'ingredients', label: 'Ingredientes', icon: Package },
@@ -225,6 +359,9 @@ export default function AdminPanel() {
           ))}
         </div>
 
+        {/* ── TAB DASHBOARD ─────────────────────────── */}
+        {tab === 'dashboard' && <DashboardTab />}
+
         {/* ── TAB CATEGORÍAS ────────────────────────── */}
         {tab === 'categories' && (
           <div className="flex flex-col gap-4">
@@ -260,7 +397,7 @@ export default function AdminPanel() {
             {categories.map(cat => {
               const count = products.filter(p => p.categoryId === cat.id).length;
               return (
-                <div key={cat.id} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
+                <div key={cat.id} className={`flex items-center gap-3 p-4 rounded-2xl border transition-all ${
                   cat.visible ? 'bg-gray-900/50 border-gray-800' : 'bg-gray-900/20 border-gray-800/50 opacity-60'
                 }`}>
                   <div className="flex-1">
@@ -275,6 +412,15 @@ export default function AdminPanel() {
                         : 'bg-gray-800 text-gray-500 hover:bg-gray-700 border border-gray-700'
                     }`}>
                     {cat.visible ? <><Eye size={12} /> Visible</> : <><EyeOff size={12} /> Oculta</>}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`¿Eliminár "${cat.name}" y sus ${count} producto${count !== 1 ? 's' : ''}?`)) {
+                        removeCategory(cat.id);
+                      }
+                    }}
+                    className="p-2 rounded-lg text-gray-600 hover:text-nyred hover:bg-gray-800 transition-colors" title="Eliminar categoría">
+                    <Trash2 size={14} />
                   </button>
                 </div>
               );
@@ -346,6 +492,13 @@ export default function AdminPanel() {
                         <button onClick={() => setEditingProduct(product.id)}
                           className="p-2 rounded-lg text-gray-400 hover:text-nyblue hover:bg-gray-800 transition-colors">
                           <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`¿Eliminár "${product.name}"?`)) removeProduct(product.id);
+                          }}
+                          className="p-2 rounded-lg text-gray-600 hover:text-nyred hover:bg-gray-800 transition-colors" title="Eliminar producto">
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
