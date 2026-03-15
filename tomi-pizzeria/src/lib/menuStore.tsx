@@ -1,5 +1,6 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
+import { updateIngrediente, getIngredientes } from '../services/sheetsApi'
 
 export type ProductStatus = 'normal' | 'promo' | 'limited' | 'sold-out'
 
@@ -68,6 +69,7 @@ interface MenuStoreValue {
   deductIngredientsForOrder: (orderedItems: { productId: string; quantity: number }[]) => void
   removeCategory: (id: string) => void
   removeProduct: (id: string) => void
+  removeIngredient: (id: string) => void
 }
 
 const randomId = () => Math.random().toString(36).slice(2, 9)
@@ -174,8 +176,27 @@ const MenuContext = createContext<MenuStoreValue | undefined>(undefined)
 export function MenuProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState(initialCategories)
   const [products, setProducts] = useState(initialProducts)
-  const [ingredients, setIngredients] = useState(initialIngredients)
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]) // Comienza vacío, se carga desde Sheets
   const [heroBanners, setHeroBanners] = useState(initialHero)
+
+  useEffect(() => {
+    // Cargar ingredientes reales desde Google Sheets
+    getIngredientes()
+      .then(res => {
+        if (res.ok && res.data) {
+          const loaded: Ingredient[] = res.data.map(row => ({
+            id: String(row.ID),
+            name: String(row.Nombre),
+            stock: Number(row.Stock) || 0,
+            active: row.Activo === true || row.Activo === 'true' || row.Activo === 'TRUE',
+          }))
+          // Si el sheet estaba completamente vacío, usamos init, sino los del sheet
+          if (loaded.length === 0) setIngredients(initialIngredients)
+          else setIngredients(loaded)
+        }
+      })
+      .catch(console.error)
+  }, [])
 
   const addCategory = (category: Omit<Category, 'id'>) => {
     setCategories((prev) => [...prev, { ...category, id: randomId() }])
@@ -203,11 +224,30 @@ export function MenuProvider({ children }: { children: ReactNode }) {
   }
 
   const addIngredient = (ingredient: Omit<Ingredient, 'id'>) => {
-    setIngredients((prev) => [...prev, { ...ingredient, id: randomId() }])
+    setIngredients((prev) => {
+      // Evitar duplicados por nombre
+      const exists = prev.some(ing => ing.name.toLowerCase() === ingredient.name.toLowerCase())
+      if (exists) {
+        alert(`Ya existe un ingrediente llamado "${ingredient.name}".`)
+        return prev
+      }
+      
+      const newId = randomId()
+      const newIngredients = [...prev, { ...ingredient, id: newId }]
+      updateIngrediente({ id: newId, nombre: ingredient.name, stock: ingredient.stock, activo: ingredient.active }).catch(console.error)
+      return newIngredients
+    })
   }
 
   const updateIngredient = (id: string, data: Partial<Omit<Ingredient, 'id'>>) => {
-    setIngredients((prev) => prev.map((ingredient) => (ingredient.id === id ? { ...ingredient, ...data } : ingredient)))
+    setIngredients((prev) => prev.map((ingredient) => {
+      if (ingredient.id === id) {
+        const merged = { ...ingredient, ...data }
+        updateIngrediente({ id, nombre: merged.name, stock: merged.stock, activo: merged.active }).catch(console.error)
+        return merged
+      }
+      return ingredient
+    }))
   }
 
   const addHeroBanner = (hero: Omit<HeroBanner, 'id'>) => {
@@ -250,6 +290,13 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     setProducts((prev) => prev.filter((p) => p.id !== id))
   }
 
+  const removeIngredient = (id: string) => {
+    setIngredients((prev) => prev.filter((i) => i.id !== id))
+    import('../services/sheetsApi').then(({ removeIngrediente }) => {
+      removeIngrediente(id).catch(console.error)
+    })
+  }
+
   const value: MenuStoreValue = {
     categories,
     products,
@@ -264,6 +311,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     adjustProductStock,
     addIngredient,
     updateIngredient,
+    removeIngredient,
     addHeroBanner,
     updateHeroBanner,
     deductIngredientsForOrder,

@@ -309,7 +309,7 @@ function DashboardTab() {
 
 export default function AdminPanel() {
   const navigate = useNavigate();
-  const { categories, products, ingredients, addCategory, updateCategory, removeCategory, addProduct, updateProduct, removeProduct, addIngredient, updateIngredient } = useMenuStore();
+  const { categories, products, ingredients, addCategory, updateCategory, removeCategory, addProduct, updateProduct, removeProduct, addIngredient, updateIngredient, removeIngredient } = useMenuStore();
 
   const [tab, setTab] = useState<Tab>('dashboard');
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
@@ -519,14 +519,20 @@ export default function AdminPanel() {
                 <Plus size={14} /> Agregar
               </button>
             </div>
-            <p className="text-xs text-gray-500 mb-2">El stock se descuenta a medida que se reciben pedidos. Actualizá el stock manualmente si compraste más.</p>
+            <p className="text-xs text-gray-500 mb-2">Podes editar el nombre del ingrediente clickeando directamente sobre el texto.</p>
 
             {ingredients.map(ing => (
               <div key={ing.id} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
                 ing.active ? 'bg-gray-900/50 border-gray-800' : 'bg-gray-900/20 border-gray-800/40 opacity-60'
               }`}>
                 <div className="flex-1">
-                  <p className="font-bold text-white">{ing.name}</p>
+                  <input
+                    type="text"
+                    value={ing.name}
+                    onChange={(e) => updateIngredient(ing.id, { name: e.target.value })}
+                    className="font-bold text-white bg-transparent border-b border-transparent hover:border-gray-700 focus:border-nyblue focus:outline-none w-full transition-colors pb-0.5"
+                    placeholder="Nombre del ingrediente"
+                  />
                   <p className={`text-xs font-bold mt-0.5 ${
                     ing.stock > 10 ? 'text-nygreen' : ing.stock > 0 ? 'text-nygold' : 'text-nyred'
                   }`}>
@@ -541,10 +547,19 @@ export default function AdminPanel() {
                   <button onClick={() => updateIngredient(ing.id, { stock: ing.stock + 5 })}
                     className="w-7 h-7 rounded-lg bg-gray-800 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 text-xs font-bold">+5</button>
                 </div>
-                <button onClick={() => updateIngredient(ing.id, { active: !ing.active })}
-                  className={`p-2 rounded-lg transition-colors ${ing.active ? 'text-nygreen hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-800'}`}>
-                  {ing.active ? <Eye size={14} /> : <EyeOff size={14} />}
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => updateIngredient(ing.id, { active: !ing.active })}
+                    className={`p-2 rounded-lg transition-colors ${ing.active ? 'text-nygreen hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-800'}`}>
+                    {ing.active ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`¿Eliminár el ingrediente "${ing.name}"?`)) removeIngredient(ing.id);
+                    }}
+                    className="p-2 rounded-lg text-gray-600 hover:text-nyred hover:bg-gray-800 transition-colors" title="Eliminar ingrediente">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

@@ -96,6 +96,11 @@ export async function saveCliente(data: {
   return post('saveCliente', data);
 }
 
+/** Obtiene todos los ingredientes */
+export async function getIngredientes(): Promise<{ ok: boolean; data: Record<string, any>[] }> {
+  return get({ action: 'getIngredientes' });
+}
+
 /** Sincroniza un producto al Sheet */
 export async function saveProducto(data: {
   id: string;
@@ -115,4 +120,19 @@ export async function updateStockBatch(
   deductions: { ingredientId: string; amount: number }[]
 ): Promise<{ ok: boolean }> {
   return post('updateStockBatch', { deductions });
+}
+
+/** Agrega o actualiza un ingrediente */
+export async function updateIngrediente(data: {
+  id: string;
+  nombre: string;
+  stock?: number;
+  activo?: boolean;
+}): Promise<{ ok: boolean }> {
+  return post('updateIngrediente', data);
+}
+
+/** Elimina un ingrediente (cambia activo a false temporalmente, o lo borra real si hay endpoint) */
+export async function removeIngrediente(id: string): Promise<{ ok: boolean }> {
+  return post('removeIngrediente', { id });
 }
